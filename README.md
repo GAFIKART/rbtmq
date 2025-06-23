@@ -9,7 +9,8 @@
 - **Эффективность** - один connector для publisher и consumer
 - **Микросервисы** - идеально подходит для независимых сервисов
 - **Производительность** - оптимизирована для высоких нагрузок
-- **Простота использования** - всего 5 основных функций
+- **Request-Response** - поддержка паттерна запрос-ответ
+- **Простота использования** - всего 7 основных функций
 
 ## 📦 Установка
 
@@ -101,6 +102,46 @@ func main() {
 }
 ```
 
+### Request-Response паттерн
+
+```go
+// Отправка запроса и ожидание ответа
+request := RequestMessage{Question: "What is 2+2?", ID: "req-1"}
+responseBody, err := rabbitmq.PublishWithResponse(request, 10*time.Second)
+if err != nil {
+    log.Printf("Failed to get response: %v", err)
+} else {
+    log.Printf("Response: %s", string(responseBody))
+}
+
+// Обработка запросов и отправка ответов
+go func() {
+    for msg := range messages {
+        if msg.OriginalMessage.ReplyTo != "" {
+            // Это запрос, требующий ответа
+            var request RequestMessage
+            if err := msg.UnmarshalBody(&request); err != nil {
+                msg.Nack(true)
+                continue
+            }
+
+            // Создаем ответ
+            response := ResponseMessage{
+                Answer: fmt.Sprintf("Answer to: %s", request.Question),
+                ID:     request.ID,
+            }
+
+            // Отправляем ответ
+            if err := rabbitmq.Respond(msg, response); err != nil {
+                log.Printf("Failed to send response: %v", err)
+            }
+
+            msg.Ack()
+        }
+    }
+}()
+```
+
 ## 📚 API Документация
 
 ### Основные типы
@@ -153,6 +194,17 @@ message := MyMessage{ID: "123", Data: "test"}
 err := rabbitmq.Publish(message)
 ```
 
+#### PublishWithResponse(msg, timeout...)
+Отправляет сообщение и ожидает ответ. Поддерживает опциональный таймаут (по умолчанию 30 секунд).
+
+```go
+// С таймаутом по умолчанию (30 секунд)
+response, err := rabbitmq.PublishWithResponse(request)
+
+// С указанным таймаутом
+response, err := rabbitmq.PublishWithResponse(request, 10*time.Second)
+```
+
 #### StartConsuming()
 Запускает слушатель сообщений.
 
@@ -168,6 +220,14 @@ messages := rabbitmq.GetMessages()
 for msg := range messages {
     // Обработка сообщения
 }
+```
+
+#### Respond(originalDelivery, responsePayload)
+Отправляет ответ на полученное сообщение (для request-response паттерна).
+
+```go
+response := ResponseMessage{Answer: "42"}
+err := rabbitmq.Respond(originalMessage, response)
 ```
 
 #### Shutdown(ctx)
@@ -202,237 +262,126 @@ var message MyMessage
 err := msg.UnmarshalBody(&message)
 ```
 
-## 🏗️ Архитектура
+## 🔄 Request-Response паттерн
 
-### Микросервисная архитектура
+Библиотека поддерживает паттерн запрос-ответ, который позволяет:
 
-Библиотека идеально подходит для микросервисной архитектуры:
+1. **Отправлять запросы** с помощью `PublishWithResponse()`
+2. **Обрабатывать запросы** в consumer и отправлять ответы через `Respond()`
+3. **Получать ответы** автоматически в том же вызове
 
-```go
-// Сервис A - отправляет сообщения
-configA := rbtmqlib.RabbitMQConfig{
-    ConnectParams: rbtmqlib.ConnectParams{
-        Username: "user", Password: "pass", Host: "localhost", Port: 5672,
-    },
-    RoutingKey: "orders.new",
-}
-rabbitmqA, _ := rbtmqlib.NewRabbitMQ(configA)
-rabbitmqA.Publish(Order{ID: "123", Amount: 100})
+### Как это работает:
 
-// Сервис B - получает сообщения
-configB := rbtmqlib.RabbitMQConfig{
-    ConnectParams: rbtmqlib.ConnectParams{
-        Username: "user", Password: "pass", Host: "localhost", Port: 5672,
-    },
-    RoutingKey: "orders.new",
-}
-rabbitmqB, _ := rbtmqlib.NewRabbitMQ(configB)
-rabbitmqB.StartConsuming()
-messages := rabbitmqB.GetMessages()
-```
+1. **Отправитель** вызывает `PublishWithResponse()` с сообщением
+2. Библиотека создает временную очередь для ответов
+3. Сообщение отправляется с заголовками `CorrelationId` и `ReplyTo`
+4. **Получатель** обрабатывает сообщение и вызывает `Respond()`
+5. Ответ отправляется в временную очередь отправителя
+6. **Отправитель** получает ответ и временная очередь удаляется
 
-### Независимые слушатели
+### Преимущества:
 
-Каждый микросервис может независимо слушать свои сообщения:
+- **Простота** - один вызов для отправки и получения ответа
+- **Автоматическое управление** - временные очереди создаются и удаляются автоматически
+- **Таймауты** - защита от бесконечного ожидания
+- **Корреляция** - автоматическое сопоставление запросов и ответов
+
+## ⚙️ Конфигурация
+
+### Параметры по умолчанию
 
 ```go
-// Сервис уведомлений
-notificationConsumer := rbtmqlib.NewRabbitMQ(rbtmqlib.RabbitMQConfig{
-    ConnectParams: connectParams,
-    RoutingKey: "notifications.email",
-})
-
-// Сервис аналитики  
-analyticsConsumer := rbtmqlib.NewRabbitMQ(rbtmqlib.RabbitMQConfig{
-    ConnectParams: connectParams,
-    RoutingKey: "analytics.events",
-})
+DefaultConnectionTimeout = 30 * time.Second
+DefaultHeartbeat         = 30
+DefaultPrefetchCount     = 10
+MaxMessageSize           = 10 * 1024 * 1024 // 10MB
 ```
 
-## ⚡ Производительность
-
-### Настройки по умолчанию
-
-```go
-const (
-    DefaultPrefetchCount = 10                    // Сообщений без подтверждения
-    MaxMessageSize       = 10 * 1024 * 1024      // Максимальный размер (10MB)
-)
-
-var (
-    DefaultConnectionTimeout = 30 * time.Second   // Таймаут подключения
-    DefaultHeartbeat        = 30                 // Интервал heartbeat
-)
-```
-
-### Оптимизация
-
-- **Один connector** на экземпляр RabbitMQ
-- **Небуферизованный канал** сообщений (использует буферизацию RabbitMQ)
-- **Автоматическое переподключение** при разрыве соединения
-- **Минимальные блокировки** для высокой производительности
-
-## 🔒 Надежность
-
-### Автоматическое переподключение
-
-Библиотека автоматически обрабатывает разрывы соединения:
-
-```go
-// При разрыве соединения библиотека автоматически:
-// 1. Обнаруживает разрыв
-// 2. Пытается переподключиться
-// 3. Восстанавливает работу
-```
-
-### Обработка ошибок
-
-```go
-// Отправка сообщений
-if err := rabbitmq.Publish(message); err != nil {
-    log.Printf("Failed to publish: %v", err)
-    // Обработка ошибки
-}
-
-// Получение сообщений
-for msg := range messages {
-    if err := processMessage(msg); err != nil {
-        msg.Nack(true)  // Вернуть в очередь для повторной обработки
-    } else {
-        msg.Ack()       // Подтвердить успешную обработку
-    }
-}
-```
-
-## 📋 Примеры использования
-
-### Отправка сообщений
-
-```go
-// Простая отправка
-message := map[string]interface{}{
-    "type": "order_created",
-    "data": map[string]interface{}{
-        "order_id": "123",
-        "amount": 100.50,
-    },
-}
-err := rabbitmq.Publish(message)
-
-// Отправка структуры
-type OrderEvent struct {
-    Type      string    `json:"type"`
-    OrderID   string    `json:"order_id"`
-    Amount    float64   `json:"amount"`
-    Timestamp time.Time `json:"timestamp"`
-}
-
-event := OrderEvent{
-    Type:      "order_created",
-    OrderID:   "123",
-    Amount:    100.50,
-    Timestamp: time.Now(),
-}
-err := rabbitmq.Publish(event)
-```
-
-### Получение сообщений
-
-```go
-// Простая обработка
-for msg := range messages {
-    log.Printf("Received: %s", string(msg.OriginalMessage.Body))
-    msg.Ack()
-}
-
-// Обработка с десериализацией
-type MyMessage struct {
-    ID   string `json:"id"`
-    Data string `json:"data"`
-}
-
-for msg := range messages {
-    var message MyMessage
-    if err := msg.UnmarshalBody(&message); err != nil {
-        log.Printf("Failed to unmarshal: %v", err)
-        msg.Nack(true)  // Вернуть в очередь
-        continue
-    }
-    
-    log.Printf("Processed: ID=%s, Data=%s", message.ID, message.Data)
-    msg.Ack()
-}
-```
-
-### Graceful Shutdown
-
-```go
-// Создание контекста с таймаутом
-ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-defer cancel()
-
-// Корректное завершение
-if err := rabbitmq.Shutdown(ctx); err != nil {
-    log.Printf("Shutdown error: %v", err)
-}
-```
-
-## 🐳 Docker
-
-### Запуск RabbitMQ
-
-```bash
-docker run -d --name rabbitmq \
-  -p 5672:5672 \
-  -p 15672:15672 \
-  rabbitmq:3-management
-```
-
-### Подключение
+### Настройка параметров
 
 ```go
 config := rbtmqlib.RabbitMQConfig{
     ConnectParams: rbtmqlib.ConnectParams{
-        Username: "guest",
-        Password: "guest",
-        Host:     "localhost",
-        Port:     5672,
+        Username:           "guest",
+        Password:           "guest",
+        Host:               "localhost",
+        Port:               5672,
+        Heartbeat:          60,                    // 60 секунд
+        ConnectionTimeout:   60 * time.Second,      // 60 секунд
     },
-    RoutingKey: "my.queue",
+    RoutingKey: "my.service.messages",
 }
 ```
 
-## 🧪 Тестирование
+## 🚀 Производительность
 
-### Запуск примера
+- **Один connector** для publisher и consumer
+- **Автоматическое переподключение** при потере соединения
+- **Эффективная сериализация** JSON
+- **Оптимизированные очереди** для request-response
+- **Минимальные накладные расходы**
 
-```bash
-cd example
-go run main.go
+## 🔧 Примеры использования
+
+### Микросервис обработки заказов
+
+```go
+// Сервис заказов
+orderService := rbtmqlib.NewRabbitMQ(orderConfig)
+defer orderService.Shutdown(context.Background())
+
+// Обработка заказов
+go func() {
+    for msg := range orderService.GetMessages() {
+        var order Order
+        if err := msg.UnmarshalBody(&order); err != nil {
+            msg.Nack(true)
+            continue
+        }
+
+        // Обработка заказа
+        result := processOrder(order)
+        msg.Ack()
+    }
+}()
+
+// Отправка заказа
+order := Order{ID: "123", Items: []string{"item1", "item2"}}
+err := orderService.Publish(order)
 ```
 
-### Проверка работы
+### Request-Response для API
 
-1. Запустите RabbitMQ
-2. Запустите пример
-3. Проверьте логи - должны появиться сообщения об отправке и получении
+```go
+// API сервис
+apiService := rbtmqlib.NewRabbitMQ(apiConfig)
 
-## 📝 Логирование
+// Обработка API запросов
+go func() {
+    for msg := range apiService.GetMessages() {
+        if msg.OriginalMessage.ReplyTo != "" {
+            var request APIRequest
+            if err := msg.UnmarshalBody(&request); err != nil {
+                msg.Nack(true)
+                continue
+            }
 
-Библиотека использует стандартный `log` пакет для логирования:
+            // Обработка запроса
+            response := handleAPIRequest(request)
+            
+            // Отправка ответа
+            apiService.Respond(msg, response)
+            msg.Ack()
+        }
+    }
+}()
 
+// Клиент API
+request := APIRequest{Method: "GET", Path: "/users/123"}
+response, err := apiService.PublishWithResponse(request, 5*time.Second)
 ```
-2024/01/01 12:00:00 Connected to RabbitMQ at localhost:5672
-2024/01/01 12:00:01 Published message 1
-2024/01/01 12:00:01 Received message: {"id":"msg-1","content":"Test message 1","time":"2024-01-01T12:00:01Z"}
-2024/01/01 12:00:01 Processed message: ID=msg-1, Content=Test message 1
-```
 
-## 🆘 Поддержка
+## 📝 Лицензия
 
-Если у вас есть вопросы или проблемы:
-
-1. Проверьте [Issues](../../issues)
-2. Создайте новый Issue с описанием проблемы
-3. Укажите версию Go и RabbitMQ
+MIT License
 

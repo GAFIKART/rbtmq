@@ -21,13 +21,9 @@ type consumer struct {
 
 // newConsumerWithConnector создаёт новый экземпляр consumer с существующим connector
 func newConsumerWithConnector(params ConsumerParams, connector *connector) (*consumer, error) {
-	if connector == nil {
-		return nil, fmt.Errorf("connector cannot be nil")
-	}
-
-	ch := connector.getChannel()
-	if ch == nil {
-		return nil, fmt.Errorf("failed to get channel from connector")
+	ch, err := validateChannelFromConnector(connector)
+	if err != nil {
+		return nil, err
 	}
 
 	_, queueName, err := setupExchangeAndQueue(ch, params.RoutingKey, true, "", "")
@@ -110,9 +106,8 @@ func (c *consumer) consumeLoop() {
 
 // shutdown корректно завершает работу consumer
 func (c *consumer) shutdown(ctx context.Context) error {
-	log.Printf("Shutting down consumer...")
+	logShutdown("consumer")
 	c.cancel()
 	c.wg.Wait()
-	log.Printf("Consumer shutdown completed")
 	return nil
 }

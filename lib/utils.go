@@ -1,7 +1,9 @@
 package rbtmqlib
 
 import (
+	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/rabbitmq/amqp091-go"
@@ -98,4 +100,98 @@ func sanitizeQueueName(name string) string {
 		result = "default_queue"
 	}
 	return result
+}
+
+// serializeMessage сериализует сообщение в JSON и валидирует размер
+func serializeMessage(msg any) ([]byte, error) {
+	body, err := json.Marshal(msg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal message: %w", err)
+	}
+
+	if err := validateMessageSize(body); err != nil {
+		return nil, err
+	}
+
+	return body, nil
+}
+
+// createPublishing создает структуру amqp091.Publishing с базовыми параметрами
+func createPublishing(body []byte, correlationID, replyTo string) amqp091.Publishing {
+	publishing := amqp091.Publishing{
+		ContentType: "application/json",
+		Body:        body,
+	}
+
+	if correlationID != "" {
+		publishing.CorrelationId = correlationID
+	}
+
+	if replyTo != "" {
+		publishing.ReplyTo = replyTo
+	}
+
+	return publishing
+}
+
+// validateChannel проверяет доступность канала
+func validateChannel(ch *amqp091.Channel) error {
+	if ch == nil {
+		return fmt.Errorf("channel not available")
+	}
+	return nil
+}
+
+// validateConnector проверяет, что connector не nil
+func validateConnector(connector *connector) error {
+	if connector == nil {
+		return fmt.Errorf("connector cannot be nil")
+	}
+	return nil
+}
+
+// validateChannelFromConnector проверяет доступность канала из connector
+func validateChannelFromConnector(connector *connector) (*amqp091.Channel, error) {
+	if err := validateConnector(connector); err != nil {
+		return nil, err
+	}
+
+	ch := connector.getChannel()
+	if ch == nil {
+		return nil, fmt.Errorf("failed to get channel")
+	}
+
+	return ch, nil
+}
+
+// createTemporaryQueue создает временную очередь для ответов
+func createTemporaryQueue(ch *amqp091.Channel) (*amqp091.Queue, error) {
+	if err := validateChannel(ch); err != nil {
+		return nil, err
+	}
+
+	queue, err := ch.QueueDeclare(
+		"",    // name
+		false, // durable
+		true,  // delete when unused
+		true,  // exclusive
+		false, // no-wait
+		nil,   // arguments
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to declare a reply queue: %w", err)
+	}
+
+	return &queue, nil
+}
+
+// logShutdown логирует процесс завершения работы компонента
+func logShutdown(componentName string) {
+	log.Printf("Shutting down %s...", componentName)
+	log.Printf("%s shutdown completed", componentName)
+}
+
+// logShutdownError логирует ошибку при завершении работы компонента
+func logShutdownError(componentName string, err error) {
+	log.Printf("error shutting down %s: %v", componentName, err)
 }

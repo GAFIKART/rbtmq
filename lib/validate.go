@@ -21,28 +21,6 @@ func validateConnectParams(params ConnectParams) error {
 	return nil
 }
 
-// validateConsumerParams валидирует параметры consumer
-func validateConsumerParams(params ConsumerParams) error {
-	if err := validateConnectParams(params.ConnectParams); err != nil {
-		return err
-	}
-	if params.RoutingKey == "" {
-		return fmt.Errorf("routingKey is required")
-	}
-	return nil
-}
-
-// validatePublisherParams валидирует параметры Publisher
-func validatePublisherParams(params PublisherParams) error {
-	if err := validateConnectParams(params.ConnectParams); err != nil {
-		return err
-	}
-	if params.RoutingKey == "" {
-		return fmt.Errorf("routingKey is required")
-	}
-	return nil
-}
-
 // validateMessageSize валидирует размер сообщения
 func validateMessageSize(body []byte) error {
 	if len(body) > MaxMessageSize {

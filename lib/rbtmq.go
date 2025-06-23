@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 )
 
 // RabbitMQ основной интерфейс для работы с RabbitMQ
@@ -74,6 +75,23 @@ func (r *RabbitMQ) Publish(msg any) error {
 	return r.publisher.publish(msg)
 }
 
+// PublishWithResponse отправляет сообщение и ожидает ответ
+func (r *RabbitMQ) PublishWithResponse(msg any, timeout ...time.Duration) ([]byte, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if r.publisher == nil {
+		return nil, fmt.Errorf("publisher is not initialized")
+	}
+
+	finalTimeout := 30 * time.Second
+	if len(timeout) > 0 {
+		finalTimeout = timeout[0]
+	}
+
+	return r.publisher.publishWithResponse(msg, finalTimeout)
+}
+
 // StartConsuming запускает потребление сообщений
 func (r *RabbitMQ) StartConsuming() error {
 	r.mu.RLock()
@@ -107,11 +125,15 @@ func (r *RabbitMQ) Shutdown(ctx context.Context) error {
 	log.Printf("Shutting down RabbitMQ...")
 
 	if r.consumer != nil {
-		r.consumer.shutdown(ctx)
+		if err := r.consumer.shutdown(ctx); err != nil {
+			logShutdownError("consumer", err)
+		}
 	}
 
 	if r.publisher != nil {
-		r.publisher.shutdown(ctx)
+		if err := r.publisher.shutdown(ctx); err != nil {
+			logShutdownError("publisher", err)
+		}
 	}
 
 	if r.connector != nil {
@@ -120,4 +142,16 @@ func (r *RabbitMQ) Shutdown(ctx context.Context) error {
 
 	log.Printf("RabbitMQ shutdown completed")
 	return nil
+}
+
+// Respond отправляет ответ на полученное сообщение
+func (r *RabbitMQ) Respond(originalDelivery *DeliveryMessage, responsePayload any) error {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if r.publisher == nil {
+		return fmt.Errorf("publisher is not initialized")
+	}
+
+	return r.publisher.respond(originalDelivery, responsePayload)
 }
