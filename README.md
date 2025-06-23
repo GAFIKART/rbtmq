@@ -15,7 +15,7 @@
 ## 📦 Установка
 
 ```bash
-go get github.com/GAFIKART/rbtmq/lib
+go get github.com/GAFIKART/rbtmq
 ```
 
 ## 🔧 Быстрый старт
