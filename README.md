@@ -10,6 +10,7 @@
 - **Микросервисы** - идеально подходит для независимых сервисов
 - **Производительность** - оптимизирована для высоких нагрузок
 - **Request-Response** - поддержка паттерна запрос-ответ
+- **Гибкая работа с JSON** - получайте сырые данные и парсите как хотите
 - **Простота использования** - всего 7 основных функций
 
 ## 📦 Установка
@@ -27,6 +28,7 @@ package main
 
 import (
     "context"
+    "encoding/json"
     "fmt"
     "log"
     "time"
@@ -71,6 +73,11 @@ func main() {
     // Обработка сообщений
     go func() {
         for msg := range messages {
+            // Получаем сырой JSON
+            rawJSON := msg.GetBodyAsString()
+            log.Printf("Received: %s", rawJSON)
+
+            // Способ 1: Используем встроенный метод
             var message Message
             if err := msg.UnmarshalBody(&message); err != nil {
                 log.Printf("Failed to unmarshal: %v", err)
@@ -100,6 +107,31 @@ func main() {
 
     time.Sleep(10 * time.Second)
 }
+```
+
+### Гибкая работа с JSON
+
+Библиотека предоставляет несколько способов работы с JSON:
+
+```go
+// Способ 1: Получить сырой JSON как строку
+rawJSON := msg.GetBodyAsString()
+log.Printf("Raw JSON: %s", rawJSON)
+
+// Способ 2: Получить как байты
+rawBytes := msg.GetBodyAsBytes()
+log.Printf("Raw bytes length: %d", len(rawBytes))
+
+// Способ 3: Парсить в структуру через библиотеку
+var message Message
+err := msg.UnmarshalBody(&message)
+
+// Способ 4: Использовать стандартную библиотеку JSON
+var customMessage Message
+err := json.Unmarshal(msg.GetBodyAsBytes(), &customMessage)
+
+// Способ 5: Использовать любую другую JSON библиотеку
+// Например, github.com/json-iterator/go
 ```
 
 ### Request-Response паттерн
@@ -254,6 +286,22 @@ msg.Nack(true)  // Вернуть в очередь
 msg.Nack(false) // Удалить из очереди
 ```
 
+#### GetBodyAsString()
+Возвращает тело сообщения как строку (сырой JSON).
+
+```go
+rawJSON := msg.GetBodyAsString()
+log.Printf("Raw JSON: %s", rawJSON)
+```
+
+#### GetBodyAsBytes()
+Возвращает тело сообщения как байты.
+
+```go
+rawBytes := msg.GetBodyAsBytes()
+log.Printf("Raw bytes length: %d", len(rawBytes))
+```
+
 #### UnmarshalBody(v)
 Десериализует тело сообщения в структуру.
 
@@ -261,6 +309,44 @@ msg.Nack(false) // Удалить из очереди
 var message MyMessage
 err := msg.UnmarshalBody(&message)
 ```
+
+## 📄 Работа с JSON
+
+Библиотека предоставляет гибкие способы работы с JSON данными:
+
+### Получение сырых данных
+
+```go
+// Получить JSON как строку
+rawJSON := msg.GetBodyAsString()
+log.Printf("Raw JSON: %s", rawJSON)
+
+// Получить как байты
+rawBytes := msg.GetBodyAsBytes()
+log.Printf("Raw bytes: %d bytes", len(rawBytes))
+```
+
+### Парсинг в структуры
+
+```go
+// Способ 1: Через библиотеку
+var message Message
+err := msg.UnmarshalBody(&message)
+
+// Способ 2: Через стандартную библиотеку
+var customMessage Message
+err := json.Unmarshal(msg.GetBodyAsBytes(), &customMessage)
+
+// Способ 3: Через любую другую JSON библиотеку
+// Например, github.com/json-iterator/go
+```
+
+### Преимущества такого подхода
+
+- **Полный контроль** - вы сами решаете как парсить JSON
+- **Гибкость** - можете использовать любую JSON библиотеку
+- **Производительность** - нет лишних преобразований
+- **Простота отладки** - видите сырые данные
 
 ## 🔄 Request-Response паттерн
 
@@ -320,6 +406,8 @@ config := rbtmqlib.RabbitMQConfig{
 - **Эффективная сериализация** JSON
 - **Оптимизированные очереди** для request-response
 - **Минимальные накладные расходы**
+- **Гибкая работа с JSON** - нет лишних преобразований
+- **Поддержка любых JSON библиотек** - используйте то, что подходит вашему проекту
 
 ## 🔧 Примеры использования
 
@@ -333,8 +421,13 @@ defer orderService.Shutdown(context.Background())
 // Обработка заказов
 go func() {
     for msg := range orderService.GetMessages() {
+        // Получаем сырой JSON для логирования
+        rawJSON := msg.GetBodyAsString()
+        log.Printf("Processing order: %s", rawJSON)
+
         var order Order
         if err := msg.UnmarshalBody(&order); err != nil {
+            log.Printf("Failed to parse order: %v", err)
             msg.Nack(true)
             continue
         }
@@ -360,8 +453,12 @@ apiService := rbtmqlib.NewRabbitMQ(apiConfig)
 go func() {
     for msg := range apiService.GetMessages() {
         if msg.OriginalMessage.ReplyTo != "" {
+            // Логируем входящий запрос
+            log.Printf("API Request: %s", msg.GetBodyAsString())
+
             var request APIRequest
             if err := msg.UnmarshalBody(&request); err != nil {
+                log.Printf("Failed to parse API request: %v", err)
                 msg.Nack(true)
                 continue
             }
@@ -379,6 +476,47 @@ go func() {
 // Клиент API
 request := APIRequest{Method: "GET", Path: "/users/123"}
 response, err := apiService.PublishWithResponse(request, 5*time.Second)
+```
+
+### Обработка разных типов сообщений
+
+```go
+// Обработчик с поддержкой разных типов сообщений
+go func() {
+    for msg := range messages {
+        rawJSON := msg.GetBodyAsString()
+        log.Printf("Received: %s", rawJSON)
+
+        // Пытаемся определить тип сообщения
+        var order Order
+        if err := msg.UnmarshalBody(&order); err == nil {
+            log.Printf("Processing order: %s", order.ID)
+            processOrder(order)
+            msg.Ack()
+            continue
+        }
+
+        var user User
+        if err := msg.UnmarshalBody(&user); err == nil {
+            log.Printf("Processing user: %s", user.Username)
+            processUser(user)
+            msg.Ack()
+            continue
+        }
+
+        var notification Notification
+        if err := msg.UnmarshalBody(&notification); err == nil {
+            log.Printf("Processing notification: %s", notification.Type)
+            processNotification(notification)
+            msg.Ack()
+            continue
+        }
+
+        // Неизвестный тип сообщения
+        log.Printf("Unknown message type: %s", rawJSON)
+        msg.Nack(true)
+    }
+}()
 ```
 
 ## 📝 Лицензия

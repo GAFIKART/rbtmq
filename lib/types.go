@@ -57,7 +57,17 @@ func (dm *DeliveryMessage) Nack(requeue bool) error {
 	return dm.OriginalMessage.Nack(false, requeue)
 }
 
-// UnmarshalBody десериализует тело сообщения в структуру
+// GetBodyAsString возвращает тело сообщения как строку (сырой JSON)
+func (dm *DeliveryMessage) GetBodyAsString() string {
+	return string(dm.OriginalMessage.Body)
+}
+
+// GetBodyAsBytes возвращает тело сообщения как байты
+func (dm *DeliveryMessage) GetBodyAsBytes() []byte {
+	return dm.OriginalMessage.Body
+}
+
+// UnmarshalBody десериализует тело сообщения в структуру (опциональный метод)
 func (dm *DeliveryMessage) UnmarshalBody(v any) error {
 	if len(dm.OriginalMessage.Body) == 0 {
 		return fmt.Errorf("message body is empty")
