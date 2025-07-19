@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 )
 
 // consumer слушает сообщения из очереди RabbitMQ
@@ -70,10 +71,30 @@ func (c *consumer) consumeLoop() {
 	defer c.wg.Done()
 	defer close(c.Messages)
 
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		default:
+			if err := c.consumeMessages(); err != nil {
+				log.Printf("Consumer error: %v, restarting in 2 seconds...", err)
+				time.Sleep(2 * time.Second)
+				continue
+			}
+		}
+	}
+}
+
+// consumeMessages выполняет потребление сообщений с обработкой ошибок
+func (c *consumer) consumeMessages() error {
 	ch := c.connector.getChannel()
 	if ch == nil {
-		log.Printf("Channel not available")
-		return
+		return fmt.Errorf("channel not available")
+	}
+
+	// Проверяем состояние канала
+	if ch.IsClosed() {
+		return fmt.Errorf("channel is closed")
 	}
 
 	msgs, err := ch.Consume(
@@ -86,20 +107,27 @@ func (c *consumer) consumeLoop() {
 		nil,         // args
 	)
 	if err != nil {
-		log.Printf("Failed to start consuming: %v", err)
-		return
+		return fmt.Errorf("failed to start consuming: %w", err)
 	}
+
+	log.Printf("Started consuming from queue: %s", c.queueName)
 
 	for {
 		select {
 		case msg, ok := <-msgs:
 			if !ok {
-				return
+				return fmt.Errorf("message channel closed")
 			}
-			c.Messages <- newDeliveryMessage(msg)
+
+			// Проверяем, что consumer все еще активен
+			select {
+			case c.Messages <- newDeliveryMessage(msg):
+			case <-c.ctx.Done():
+				return nil
+			}
 
 		case <-c.ctx.Done():
-			return
+			return nil
 		}
 	}
 }

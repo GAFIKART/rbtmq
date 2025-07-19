@@ -33,12 +33,10 @@ func NewRabbitMQ(config RabbitMQConfig) (*RabbitMQ, error) {
 		return nil, fmt.Errorf("failed to create connector: %w", err)
 	}
 
-	publisherParams := PublisherParams{
+	publisher, err := newPublisherWithConnector(PublisherParams{
 		ConnectParams: config.ConnectParams,
 		RoutingKey:    config.RoutingKey,
-	}
-
-	publisher, err := newPublisherWithConnector(publisherParams, connector)
+	}, connector)
 	if err != nil {
 		connector.close()
 		return nil, fmt.Errorf("failed to create publisher: %w", err)
@@ -138,6 +136,8 @@ func (r *RabbitMQ) Shutdown(ctx context.Context) error {
 
 	if r.connector != nil {
 		r.connector.close()
+		// Ждем завершения работы connector
+		r.connector.waitForShutdown()
 	}
 
 	log.Printf("RabbitMQ shutdown completed")

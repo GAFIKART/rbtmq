@@ -116,8 +116,11 @@ func main() {
 	// Демонстрируем request-response паттерн
 	testRequestResponse(rabbitmq)
 
+	// Демонстрируем устойчивость к перезапускам
+	testReconnectionResilience(rabbitmq)
+
 	// Ждем обработки всех сообщений
-	time.Sleep(5 * time.Second)
+	time.Sleep(10 * time.Second)
 	log.Println("🎉 Example completed")
 }
 
@@ -220,4 +223,49 @@ func testRequestResponse(rabbitmq *rbtmqlib.RabbitMQ) {
 
 		time.Sleep(1 * time.Second)
 	}
+}
+
+// testReconnectionResilience демонстрирует устойчивость к перезапускам
+func testReconnectionResilience(rabbitmq *rbtmqlib.RabbitMQ) {
+	log.Println("🔄 Testing Reconnection Resilience...")
+
+	// Симулируем отправку сообщений в течение длительного времени
+	go func() {
+		for i := 1; i <= 20; i++ {
+			message := Message{
+				ID:      fmt.Sprintf("resilient-msg-%d", i),
+				Content: fmt.Sprintf("Resilient test message %d", i),
+				Time:    time.Now(),
+			}
+
+			if err := rabbitmq.Publish(message); err != nil {
+				log.Printf("❌ Failed to publish resilient message %d: %v", i, err)
+			} else {
+				log.Printf("✅ Published resilient message %d", i)
+			}
+
+			time.Sleep(1 * time.Second)
+		}
+	}()
+
+	// Симулируем request-response в течение длительного времени
+	go func() {
+		for i := 1; i <= 10; i++ {
+			time.Sleep(2 * time.Second) // Пауза между запросами
+
+			request := RequestMessage{
+				Question: fmt.Sprintf("Resilient question %d", i),
+				ID:       fmt.Sprintf("resilient-req-%d", i),
+			}
+
+			log.Printf("📤 Sending resilient request: %s", request.Question)
+
+			responseBody, err := rabbitmq.PublishWithResponse(request, 10*time.Second)
+			if err != nil {
+				log.Printf("❌ Failed to get resilient response for request %d: %v", i, err)
+			} else {
+				log.Printf("📥 Received resilient response: %s", string(responseBody))
+			}
+		}
+	}()
 }

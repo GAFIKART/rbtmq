@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/rabbitmq/amqp091-go"
 )
@@ -139,6 +140,12 @@ func validateChannel(ch *amqp091.Channel) error {
 	if ch == nil {
 		return fmt.Errorf("channel not available")
 	}
+
+	// Проверяем, не закрыт ли канал
+	if ch.IsClosed() {
+		return fmt.Errorf("channel is closed")
+	}
+
 	return nil
 }
 
@@ -158,7 +165,12 @@ func validateChannelFromConnector(connector *connector) (*amqp091.Channel, error
 
 	ch := connector.getChannel()
 	if ch == nil {
-		return nil, fmt.Errorf("failed to get channel")
+		return nil, fmt.Errorf("failed to get channel - connection may be down")
+	}
+
+	// Дополнительная проверка состояния канала
+	if err := validateChannel(ch); err != nil {
+		return nil, fmt.Errorf("channel validation failed: %w", err)
 	}
 
 	return ch, nil
@@ -170,19 +182,31 @@ func createTemporaryQueue(ch *amqp091.Channel) (*amqp091.Queue, error) {
 		return nil, err
 	}
 
-	queue, err := ch.QueueDeclare(
-		"",    // name
-		false, // durable
-		true,  // delete when unused
-		true,  // exclusive
-		false, // no-wait
-		nil,   // arguments
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to declare a reply queue: %w", err)
+	// Попытки создания временной очереди с повторными попытками
+	maxRetries := 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		queue, err := ch.QueueDeclare(
+			"",    // name
+			false, // durable
+			true,  // delete when unused
+			true,  // exclusive
+			false, // no-wait
+			nil,   // arguments
+		)
+		if err != nil {
+			if attempt < maxRetries-1 {
+				log.Printf("Failed to declare reply queue, retrying in 500ms... (attempt %d/%d): %v", attempt+1, maxRetries, err)
+				time.Sleep(500 * time.Millisecond)
+				continue
+			}
+			return nil, fmt.Errorf("failed to declare a reply queue after %d attempts: %w", maxRetries, err)
+		}
+
+		log.Printf("Created temporary reply queue: %s", queue.Name)
+		return &queue, nil
 	}
 
-	return &queue, nil
+	return nil, fmt.Errorf("failed to create temporary queue after %d attempts", maxRetries)
 }
 
 // logShutdown логирует процесс завершения работы компонента

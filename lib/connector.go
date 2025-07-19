@@ -11,11 +11,17 @@ import (
 
 // connector управляет соединением с RabbitMQ
 type connector struct {
-	params   ConnectParams
-	conn     *amqp091.Connection
-	channel  *amqp091.Channel
-	mu       sync.RWMutex
-	isClosed bool
+	params           ConnectParams
+	conn             *amqp091.Connection
+	channel          *amqp091.Channel
+	mu               sync.RWMutex
+	isClosed         bool
+	reconnectChan    chan struct{}
+	reconnectMutex   sync.Mutex
+	isReconnecting   bool
+	connectionErrors chan error
+	stopChan         chan struct{}
+	wg               sync.WaitGroup
 }
 
 // newConnector создаёт новый экземпляр connector
@@ -25,7 +31,10 @@ func newConnector(params ConnectParams) (*connector, error) {
 	}
 
 	connector := &connector{
-		params: params,
+		params:           params,
+		reconnectChan:    make(chan struct{}, 1),
+		connectionErrors: make(chan error, 10),
+		stopChan:         make(chan struct{}),
 	}
 
 	applyDefaultConnectParams(&connector.params)
@@ -33,6 +42,9 @@ func newConnector(params ConnectParams) (*connector, error) {
 	if err := connector.connect(); err != nil {
 		return nil, err
 	}
+
+	// Запускаем мониторинг соединения
+	connector.startConnectionMonitor()
 
 	return connector, nil
 }
@@ -42,12 +54,8 @@ func (c *connector) connect() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.conn != nil {
-		c.conn.Close()
-	}
-	if c.channel != nil {
-		c.channel.Close()
-	}
+	// Закрываем существующие соединения
+	c.closeConnections()
 
 	url := fmt.Sprintf("amqp://%s:%s@%s:%d/", c.params.Username, c.params.Password, c.params.Host, c.params.Port)
 
@@ -89,16 +97,110 @@ func (c *connector) createChannel() error {
 	return nil
 }
 
-// getChannel возвращает канал соединения
+// getChannel возвращает канал соединения с автоматическим переподключением
 func (c *connector) getChannel() *amqp091.Channel {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if c.channel == nil || c.isClosed {
+	if c.isClosed {
+		return nil
+	}
+
+	// Проверяем состояние канала
+	if c.channel != nil && !c.channel.IsClosed() {
+		return c.channel
+	}
+
+	// Если канал закрыт, запускаем переподключение
+	if c.channel != nil && c.channel.IsClosed() {
+		log.Printf("Channel is closed, triggering reconnection...")
+		c.triggerReconnect()
 		return nil
 	}
 
 	return c.channel
+}
+
+// triggerReconnect запускает процесс переподключения
+func (c *connector) triggerReconnect() {
+	c.reconnectMutex.Lock()
+	defer c.reconnectMutex.Unlock()
+
+	if c.isReconnecting {
+		return
+	}
+
+	c.isReconnecting = true
+	select {
+	case c.reconnectChan <- struct{}{}:
+	default:
+	}
+}
+
+// startConnectionMonitor запускает мониторинг состояния соединения
+func (c *connector) startConnectionMonitor() {
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		c.monitorConnection()
+	}()
+}
+
+// monitorConnection мониторит состояние соединения и выполняет переподключение
+func (c *connector) monitorConnection() {
+	for {
+		select {
+		case <-c.reconnectChan:
+			c.performReconnect()
+		case <-c.stopChan:
+			return
+		}
+	}
+}
+
+// performReconnect выполняет переподключение
+func (c *connector) performReconnect() {
+	c.reconnectMutex.Lock()
+	defer c.reconnectMutex.Unlock()
+
+	if !c.isReconnecting {
+		return
+	}
+
+	log.Printf("Performing reconnection to RabbitMQ...")
+
+	// Попытки переподключения с экспоненциальной задержкой
+	maxRetries := 5
+	baseDelay := time.Second
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if err := c.connect(); err != nil {
+			delay := time.Duration(attempt+1) * baseDelay
+			log.Printf("Reconnection attempt %d failed: %v, retrying in %v...", attempt+1, err, delay)
+			time.Sleep(delay)
+			continue
+		}
+
+		log.Printf("Successfully reconnected to RabbitMQ")
+		c.isReconnecting = false
+		return
+	}
+
+	log.Printf("Failed to reconnect after %d attempts", maxRetries)
+	c.isReconnecting = false
+}
+
+// closeConnections закрывает соединения без блокировки
+func (c *connector) closeConnections() {
+	if c.channel != nil {
+		c.channel.Close()
+		c.channel = nil
+	}
+
+	if c.conn != nil {
+		c.conn.Close()
+		c.conn = nil
+	}
 }
 
 // close закрывает соединение
@@ -113,15 +215,15 @@ func (c *connector) close() {
 	log.Printf("Closing connector...")
 	c.isClosed = true
 
-	if c.channel != nil {
-		c.channel.Close()
-		c.channel = nil
-	}
+	// Останавливаем мониторинг
+	close(c.stopChan)
 
-	if c.conn != nil {
-		c.conn.Close()
-		c.conn = nil
-	}
+	c.closeConnections()
 
 	log.Printf("Connector closed")
+}
+
+// waitForShutdown ждет завершения работы connector
+func (c *connector) waitForShutdown() {
+	c.wg.Wait()
 }
