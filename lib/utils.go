@@ -202,7 +202,6 @@ func createTemporaryQueue(ch *amqp091.Channel) (*amqp091.Queue, error) {
 			return nil, fmt.Errorf("failed to declare a reply queue after %d attempts: %w", maxRetries, err)
 		}
 
-		log.Printf("Created temporary reply queue: %s", queue.Name)
 		return &queue, nil
 	}
 
