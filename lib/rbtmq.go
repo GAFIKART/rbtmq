@@ -2,6 +2,7 @@ package rbtmqlib
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"sync"
@@ -71,7 +72,7 @@ func (r *RabbitMQ) Publish(msg any) error {
 }
 
 // PublishWithResponse отправляет сообщение и ожидает ответ
-func (r *RabbitMQ) PublishWithResponse(msg any, timeout ...time.Duration) ([]byte, error) {
+func (r *RabbitMQ) PublishWithResponse(msg any, timeout ...time.Duration) (json.RawMessage, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 

@@ -2,6 +2,7 @@ package rbtmqlib
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
@@ -45,7 +46,7 @@ func newPublisherWithConnector(params PublisherParams, connector *connector) (*p
 func (p *publisher) publish(msg any) error {
 	// Попытки отправки с повторными попытками
 	maxRetries := 3
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := range maxRetries {
 		ch := p.connector.getChannel()
 		if err := validateChannel(ch); err != nil {
 			if attempt < maxRetries-1 {
@@ -85,10 +86,10 @@ func (p *publisher) publish(msg any) error {
 }
 
 // publishWithResponse отправляет сообщение и ожидает ответ
-func (p *publisher) publishWithResponse(msg any, timeout time.Duration) ([]byte, error) {
+func (p *publisher) publishWithResponse(msg any, timeout time.Duration) (json.RawMessage, error) {
 	// Попытки отправки с повторными попытками
 	maxRetries := 3
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := range maxRetries {
 		ch := p.connector.getChannel()
 		if err := validateChannel(ch); err != nil {
 			if attempt < maxRetries-1 {
@@ -177,7 +178,7 @@ func (p *publisher) publishWithResponse(msg any, timeout time.Duration) ([]byte,
 			return nil, fmt.Errorf("failed to decode response: %w", err)
 		}
 
-		return decodedResponse, nil
+		return json.RawMessage(decodedResponse), nil
 	}
 
 	return nil, fmt.Errorf("failed to publish message with response after %d attempts", maxRetries)
@@ -209,7 +210,7 @@ func (p *publisher) respond(originalDelivery *DeliveryMessage, responsePayload a
 
 	// Попытки отправки ответа с повторными попытками
 	maxRetries := 3
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := range maxRetries {
 		ch := p.connector.getChannel()
 		if err := validateChannel(ch); err != nil {
 			if attempt < maxRetries-1 {

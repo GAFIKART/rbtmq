@@ -106,6 +106,7 @@ func sanitizeQueueName(name string) string {
 
 // serializeMessage сериализует сообщение в JSON и валидирует размер
 func serializeMessage(msg any) ([]byte, error) {
+	// Обычная сериализация в JSON
 	body, err := json.Marshal(msg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal message: %w", err)
