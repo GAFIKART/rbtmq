@@ -171,7 +171,13 @@ func (p *publisher) publishWithResponse(msg any, timeout time.Duration) ([]byte,
 			return nil, err
 		}
 
-		return response, nil
+		// 6. Декодируем base64 если необходимо
+		decodedResponse, err := decodeBase64IfNeeded(response)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode response: %w", err)
+		}
+
+		return decodedResponse, nil
 	}
 
 	return nil, fmt.Errorf("failed to publish message with response after %d attempts", maxRetries)

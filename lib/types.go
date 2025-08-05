@@ -72,5 +72,12 @@ func (dm *DeliveryMessage) UnmarshalBody(v any) error {
 	if len(dm.OriginalMessage.Body) == 0 {
 		return fmt.Errorf("message body is empty")
 	}
-	return json.Unmarshal(dm.OriginalMessage.Body, v)
+
+	// Декодируем base64 если необходимо
+	decodedBody, err := decodeBase64IfNeeded(dm.OriginalMessage.Body)
+	if err != nil {
+		return fmt.Errorf("failed to decode message body: %w", err)
+	}
+
+	return json.Unmarshal(decodedBody, v)
 }

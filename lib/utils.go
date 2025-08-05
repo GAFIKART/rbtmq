@@ -1,6 +1,7 @@
 package rbtmqlib
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -217,4 +218,21 @@ func logShutdown(componentName string) {
 // logShutdownError логирует ошибку при завершении работы компонента
 func logShutdownError(componentName string, err error) {
 	log.Printf("error shutting down %s: %v", componentName, err)
+}
+
+// decodeBase64IfNeeded декодирует base64 если данные закодированы
+func decodeBase64IfNeeded(data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return data, nil
+	}
+
+	// Пытаемся декодировать как base64
+	str := string(data)
+	decoded, err := base64.StdEncoding.DecodeString(str)
+	if err != nil {
+		// Если не base64, возвращаем исходные данные
+		return data, nil
+	}
+
+	return decoded, nil
 }

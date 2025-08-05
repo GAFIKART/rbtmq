@@ -33,10 +33,7 @@ func NewRabbitMQ(config RabbitMQConfig) (*RabbitMQ, error) {
 		return nil, fmt.Errorf("failed to create connector: %w", err)
 	}
 
-	publisher, err := newPublisherWithConnector(PublisherParams{
-		ConnectParams: config.ConnectParams,
-		RoutingKey:    config.RoutingKey,
-	}, connector)
+	publisher, err := newPublisherWithConnector(PublisherParams(config), connector)
 	if err != nil {
 		connector.close()
 		return nil, fmt.Errorf("failed to create publisher: %w", err)
